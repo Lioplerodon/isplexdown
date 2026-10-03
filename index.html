@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Is Plex Down?</title>
+<meta name="description" content="Is the Schudde Plex server down right now?">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='12' fill='%23888'/%3E%3C/svg%3E" id="favicon">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@800;900&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+/* Layout: one theatre-marquee answer, left-aligned on a dim screen, with a ticket stub of details under it. */
+:root {
+  --bg: #f3f1ee;
+  --fg: #1d1b19;
+  --muted: #6b655e;
+  --rule: #d9d4cd;
+  --up: #1f7a4a;
+  --down: #c23a22;
+  --wait: #8a8379;
+  --state: var(--wait);
+  --display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151412; --fg: #efebe5; --muted: #9a938a; --rule: #2e2b28;
+    --up: #4cc283; --down: #ff6a4d; --wait: #8a8379; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #151412; --fg: #efebe5; --muted: #9a938a; --rule: #2e2b28;
+  --up: #4cc283; --down: #ff6a4d; --wait: #8a8379; color-scheme: dark;
+}
+:root.is-up { --state: var(--up); }
+:root.is-down { --state: var(--down); }
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 400 1rem/1.5 var(--body);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-inline: max(16px, 6vw);
+  padding-block: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-bottom));
+}
+main { display: grid; gap: 1.75rem; max-width: 60rem; width: 100%; margin-inline: auto; }
+
+.question {
+  margin: 0;
+  font: 500 0.8rem/1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.answer {
+  margin: 0;
+  font: 900 clamp(7rem, 30vw, 18rem)/0.82 var(--display);
+  letter-spacing: -0.01em;
+  text-transform: uppercase;
+  color: var(--state);
+  transition: color 0.4s ease;
+}
+.detail {
+  margin: 0;
+  font-size: clamp(1.15rem, 3.2vw, 1.6rem);
+  line-height: 1.35;
+  max-width: 34ch;
+  text-wrap: balance;
+}
+.stub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 2rem;
+  padding-top: 1rem;
+  border-top: 1px dashed var(--rule);
+  font: 400 0.85rem/1.4 var(--mono);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.stub b { font-weight: 500; color: var(--fg); }
+.dot {
+  display: inline-block; width: 0.6em; height: 0.6em; border-radius: 50%;
+  background: var(--state); margin-right: 0.5em; vertical-align: 0.05em;
+}
+:root.is-up .dot { animation: pulse 2.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) {
+  :root.is-up .dot { animation: none; }
+  .answer { transition: none; }
+}
+</style>
+</head>
+<body>
+<main>
+  <p class="question">Is Plex down?</p>
+  <h1 class="answer" id="answer">…</h1>
+  <p class="detail" id="detail">Checking the server.</p>
+  <div class="stub">
+    <span><span class="dot"></span><b id="state">Checking</b></span>
+    <span id="since"></span>
+    <span id="checked"></span>
+  </div>
+</main>
+<script>
+const STATUS_URL = "https://status.schudde.io/status/plex";
+const POLL_MS = 30000;
+const TIMEOUT_MS = 6000;
+const STALE_MS = 3 * 60 * 1000;
+
+const $ = id => document.getElementById(id);
+let lastOk = null;
+
+function ago(date) {
+  const s = Math.max(0, Math.round((Date.now() - date) / 1000));
+  if (s < 60) return s + "s ago";
+  const m = Math.round(s / 60);
+  if (m < 60) return m + " min ago";
+  const h = Math.floor(m / 60);
+  if (h < 48) return h + " h " + (m % 60) + " min ago";
+  return Math.floor(h / 24) + " days ago";
+}
+
+function setFavicon(color) {
+  $("favicon").href = "data:image/svg+xml," + encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='12' fill='${color}'/></svg>`);
+}
+
+function render(view) {
+  const root = document.documentElement;
+  root.classList.toggle("is-up", view.up);
+  root.classList.toggle("is-down", !view.up);
+  $("answer").textContent = view.up ? "Nope." : "Yes.";
+  $("detail").textContent = view.detail;
+  $("state").textContent = view.up ? "Plex is up" : "Plex is down";
+  $("since").textContent = view.since ? (view.up ? "Up since " : "Down since ") + view.since : "";
+  document.title = view.up ? "Is Plex Down? Nope." : "Is Plex Down? Yes.";
+  setFavicon(view.up ? "#1f7a4a" : "#c23a22");
+  updateChecked();
+}
+
+function updateChecked() {
+  $("checked").textContent = lastOk ? "Checked " + ago(lastOk) : "";
+}
+
+function fmtSince(iso) {
+  const d = new Date(iso);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return d.toLocaleString([], sameDay
+    ? { hour: "numeric", minute: "2-digit" }
+    : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+async function check() {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(STATUS_URL, { cache: "no-store", signal: ctrl.signal });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const checked = new Date(data.checked);
+    if (Date.now() - checked > STALE_MS) throw new Error("stale");
+    lastOk = checked;
+    if (data.up) {
+      const n = data.streams;
+      const watching = n == null ? "" : n === 0 ? " Nobody is watching right now."
+        : n === 1 ? " 1 person is watching right now." : ` ${n} people are watching right now.`;
+      render({ up: true, detail: "Plex is up and running." + watching, since: fmtSince(data.since) });
+    } else {
+      render({ up: false, detail: "The server is online, but Plex isn't responding. It's probably restarting or updating.", since: fmtSince(data.since) });
+    }
+  } catch (e) {
+    render({ up: false, detail: "Can't reach the server at all. The home internet or power is probably out.", since: null });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+check();
+setInterval(check, POLL_MS);
+setInterval(updateChecked, 1000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) check(); });
+</script>
+</body>
+</html>
